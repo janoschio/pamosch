@@ -555,7 +555,8 @@ async function flush() {
     else if (mode === 'sb') {
       const { error } = await sb.rpc('save_plan', { passcode, new_data: JSON.parse(json) });
       if (error) throw { code: error.code === '23514' ? 'invalid_argument' : error.code === '28P01' ? 'wrong_password' : 'unavailable' };
-      if (channel) channel.send({ type: 'broadcast', event: 'changed', payload: {} });
+      // tell other open pages to reload; a failure here must never affect the save
+      if (channel) Promise.resolve().then(() => channel.send({ type: 'broadcast', event: 'changed', payload: {} })).catch(() => {});
     }
     else lsSet(LS_PLAN, json);
     lastSynced = json; setStatus('saved');
