@@ -3,7 +3,7 @@
 Team Capacity Timeline for a two-person project, served at https://www.pamosch.com/planning via GitHub Pages.
 
 - `planning/index.html` – the whole app, served at /planning (no build step). Loads supabase-js from jsDelivr.
-- `index.html` – placeholder at the root that forwards to /planning.
+- `index.html` – start page with the pamosch logo (inline SVG, also in `logo.svg`).
 - `supabase/migrations/` – schema of the Supabase project `pamosch` (ref `bockhqjqeqwgjtlvgdfz`, Zürich).
 
 ## Data
