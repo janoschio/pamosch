@@ -265,6 +265,12 @@ dialog details[open] summary { margin-bottom: 10px; }
 .swatches button[aria-pressed="true"] { outline: 2px solid var(--accent); outline-offset: 2px; }
 .err { color: var(--danger); font-size: 12px; margin: 0; }
 .readonly .wr { display: none !important; }
+.gate { position: fixed; inset: 0; z-index: 80; background: var(--bg); display: grid; place-items: center; padding: 24px; }
+.gate-card { width: min(360px, 100%); background: var(--surface); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); padding: 24px; display: flex; flex-direction: column; gap: 14px; }
+.gate-card h2 { margin: 0; font-size: 18px; }
+.gate-card p { margin: 0; color: var(--muted); font-size: 13px; }
+.gate-card .btn { padding: 9px 12px; font-size: 14px; }
+.gate-card .err { color: var(--danger); }
 @media (max-width: 640px) { :root { --lab: 128px; } .tmeta { display: none; } .tl-bar .hint { display: none; } }
 @media (prefers-reduced-motion: reduce) { .bar, .ms { transition: none !important; } }
 </style>
@@ -302,6 +308,18 @@ dialog details[open] summary { margin-bottom: 10px; }
 </div>
 
 <div class="pop" id="pop" hidden role="dialog"></div>
+<div class="gate" id="gate" hidden>
+  <form class="gate-card" id="gateForm" novalidate>
+    <svg width="22" height="22" viewBox="0 0 22 22" aria-hidden="true"><circle cx="11" cy="11" r="9" fill="currentColor"/></svg>
+    <h2>Team Capacity Timeline</h2>
+    <p>Enter the team password to open the plan.</p>
+    <input type="text" name="username" value="pamosch" autocomplete="username" hidden>
+    <label class="field">Password<input type="password" id="gatePass" autocomplete="current-password"></label>
+    <label class="check"><input type="checkbox" id="gateRemember" checked> Remember on this device</label>
+    <p class="err" id="gateErr" hidden></p>
+    <button class="btn primary" type="submit">Open plan</button>
+  </form>
+</div>
 <div class="tip" id="tip" hidden></div>
 <div class="sr" id="live" aria-live="assertive"></div>
 <div class="toast" id="toast" hidden><span id="toastMsg"></span><button id="toastUndo">Undo</button></div>
@@ -513,7 +531,7 @@ function normalize(p) {
 
 /* ---------- state & persistence ---------- */
 const LS_PLAN = 'capacity-timeline:plan', LS_VIEW = 'capacity-timeline:view';
-let sb = null, plan = null, ready = false, mode = 'loading', docRef = null, canWrite = true, downloads = null;
+let sb = null, channel = null, passcode = '', plan = null, ready = false, mode = 'loading', docRef = null, canWrite = true, downloads = null;
 let saveTimer = null, saving = false, again = false, lastSynced = '';
 let view = { zoom: 'months', ghost: true };
 try { Object.assign(view, JSON.parse(lsGet(LS_VIEW) || '{}')); } catch {}
@@ -534,12 +552,17 @@ async function flush() {
   const json = JSON.stringify(plan);
   try {
     if (mode === 'db') await docRef.set({ schema: 2, plan: JSON.parse(json) });
-    else if (mode === 'sb') { const { error } = await sb.from('plans').update({ data: JSON.parse(json) }).eq('id', 'main'); if (error) throw { code: error.code === '23514' ? 'invalid_argument' : 'unavailable' }; }
+    else if (mode === 'sb') {
+      const { error } = await sb.rpc('save_plan', { passcode, new_data: JSON.parse(json) });
+      if (error) throw { code: error.code === '23514' ? 'invalid_argument' : error.code === '28P01' ? 'wrong_password' : 'unavailable' };
+      if (channel) channel.send({ type: 'broadcast', event: 'changed', payload: {} });
+    }
     else lsSet(LS_PLAN, json);
     lastSynced = json; setStatus('saved');
   } catch (e) {
     const code = e && e.code;
     if (code === 'invalid_argument' && mode === 'db') { canWrite = false; setStatus('readonly'); render(); }
+    else if (code === 'wrong_password') setStatus('error', 'The team password was changed. Reload and enter the new one.');
     else if (code === 'quota_exceeded') setStatus('error', 'Storage is full. Remove some entries, then try again.');
     else setStatus('error', 'Could not save. Your changes are still here.');
   }
@@ -878,7 +901,8 @@ document.getElementById('moreBtn').onclick = e => {
     <hr>
     <button type="button" id="mClosure" class="wr">Add company closure</button>
     <button type="button" id="mExport">Export as JSON</button>
-    <button type="button" id="mImport" class="wr">Import JSON</button>`,
+    <button type="button" id="mImport" class="wr">Import JSON</button>
+    ${mode === 'sb' ? '<hr><button type="button" id="mLock">Forget password on this device</button>' : ''}`,
     root => {
       root.querySelector('#mDays').onclick = ev => {
         const c = ev.target.closest('.chip'); if (!c || !plan) return;
@@ -890,6 +914,8 @@ document.getElementById('moreBtn').onclick = e => {
       root.querySelector('#mGhost').onchange = ev => { view.ghost = ev.target.checked; saveView(); renderTimeline(); };
       root.querySelector('#mClosure').onclick = () => { const a = document.getElementById('addClosure'); closePop(); if (a) openClosure(a, null); };
       root.querySelector('#mExport').onclick = () => { closePop(); exportPlan(); };
+      const lock = root.querySelector('#mLock');
+      if (lock) lock.onclick = () => { try { localStorage.removeItem(PASS_KEY); } catch {} location.reload(); };
       root.querySelector('#mImport').onclick = () => { closePop(); document.getElementById('importFile').click(); };
     }, { menu: true });
 };
@@ -1188,6 +1214,24 @@ function showTip(e) {
 }
 window.addEventListener('resize', () => { prevBars = new Map(); closePop(); if (plan) renderTimeline(); });
 
+/* ---------- team password (own website only) ---------- */
+const PASS_KEY = 'pamosch:planning-password';
+function askPassword(msg) {
+  const gate = document.getElementById('gate'), form = document.getElementById('gateForm'), err = document.getElementById('gateErr');
+  gate.hidden = false; err.hidden = !msg; err.textContent = msg || '';
+  const input = document.getElementById('gatePass'); input.value = ''; input.focus();
+  return new Promise(resolve => {
+    form.onsubmit = e => {
+      e.preventDefault();
+      if (!input.value) { err.textContent = 'Enter the team password.'; err.hidden = false; return; }
+      form.querySelector('button').disabled = true;
+      resolve({ pass: input.value, remember: document.getElementById('gateRemember').checked });
+      setTimeout(() => { form.querySelector('button').disabled = false; }, 1200);
+    };
+  });
+}
+function closeGate() { document.getElementById('gate').hidden = true; }
+
 /* ---------- boot ---------- */
 render();
 (async () => {
@@ -1211,9 +1255,9 @@ render();
       if (pop.hidden) render();
     }, () => setStatus('error', 'Live sync stopped. Reload the page to reconnect.'));
   } else if (window.supabase && typeof SUPABASE !== 'undefined') {
-    // own website: one shared row in Supabase, live updates over realtime
+    // own website: the plan lives in Supabase behind a shared team password
     mode = 'sb';
-    sb = window.supabase.createClient(SUPABASE.url, SUPABASE.key);
+    sb = window.supabase.createClient(SUPABASE.url, SUPABASE.key, { auth: { persistSession: false } });
     const apply = (incoming, first) => {
       const json = JSON.stringify(normalize(incoming));
       if (json === lastSynced && !first) return;
@@ -1223,15 +1267,26 @@ render();
       if (pop.hidden) render();
     };
     const load = async first => {
-      const { data, error } = await sb.from('plans').select('data').eq('id', 'main').maybeSingle();
+      const { data, error } = await sb.rpc('get_plan', { passcode });
+      if (error && error.code === '28P01') return 'denied';
       ready = true;
-      if (error) { setStatus('error', 'Could not load the plan. Check the connection and reload.'); render(); return; }
-      if (data) apply(data.data, first); else render();
+      if (error) { setStatus('error', 'Could not load the plan. Check the connection and reload.'); render(); return 'error'; }
+      if (data) apply(data, first); else render();
       setStatus('saved');
+      return 'ok';
     };
-    await load(true);
-    sb.channel('plan-main')
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'plans', filter: 'id=eq.main' }, payload => apply(payload.new.data, false))
+    passcode = lsGet(PASS_KEY) || '';
+    let gateMsg = '';
+    for (;;) {
+      if (!passcode) { const r = await askPassword(gateMsg); passcode = r.pass; if (r.remember) lsSet(PASS_KEY, passcode); }
+      if (await load(true) !== 'denied') break;
+      try { localStorage.removeItem(PASS_KEY); } catch {}
+      passcode = ''; gateMsg = 'That password is not right. Try again.';
+    }
+    closeGate();
+    // other open pages only hear "something changed" and then load the plan with their own password
+    channel = sb.channel('plan-main', { config: { broadcast: { self: false } } })
+      .on('broadcast', { event: 'changed' }, () => { if (!saveTimer && !saving) load(false); })
       .subscribe(status => { if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') setStatus('error', 'Live sync paused. Changes still save; reload to see the other person\'s edits.'); });
     // catch up after the laptop slept or the tab was in the background
     document.addEventListener('visibilitychange', () => { if (!document.hidden && !saveTimer && !saving) load(false); });
