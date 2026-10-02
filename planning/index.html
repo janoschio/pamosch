@@ -264,7 +264,6 @@ dialog details[open] summary { margin-bottom: 10px; }
 .swatches button { width: 26px; height: 26px; border-radius: 5px; border: 1px solid; padding: 0; }
 .swatches button[aria-pressed="true"] { outline: 2px solid var(--accent); outline-offset: 2px; }
 .err { color: var(--danger); font-size: 12px; margin: 0; }
-.readonly .wr { display: none !important; }
 .gate { position: fixed; inset: 0; z-index: 80; background: var(--bg); display: grid; place-items: center; padding: 24px; }
 .gate-card { width: min(360px, 100%); background: var(--surface); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); padding: 24px; display: flex; flex-direction: column; gap: 14px; }
 .gate-card h2 { margin: 0; font-size: 18px; }
@@ -298,7 +297,7 @@ dialog details[open] summary { margin-bottom: 10px; }
       </div>
     </div>
     <div class="tl-body"><div class="tl-scroll" id="tlScroll"><div class="tl-canvas" id="canvas"></div></div>
-      <div class="colsize wr" id="colsize" role="separator" aria-orientation="vertical" aria-label="Name column width. Drag or use the arrow keys, double-click to reset." tabindex="0"></div></div>
+      <div class="colsize" id="colsize" role="separator" aria-orientation="vertical" aria-label="Name column width. Drag or use the arrow keys, double-click to reset." tabindex="0"></div></div>
     <div class="legend" id="legend">
       <span><i style="border:1.5px dashed var(--faint)"></i>Plan at full time</span>
       <span><i style="background:repeating-linear-gradient(135deg,var(--seg) 0 3px,var(--c-gray-bg) 3px 7px)"></i>One person away on a project day, half speed</span>
@@ -530,8 +529,8 @@ function normalize(p) {
 }
 
 /* ---------- state & persistence ---------- */
-const LS_PLAN = 'capacity-timeline:plan', LS_VIEW = 'capacity-timeline:view';
-let sb = null, channel = null, passcode = '', plan = null, ready = false, mode = 'loading', docRef = null, canWrite = true, downloads = null;
+const LS_VIEW = 'capacity-timeline:view';
+let sb = null, channel = null, passcode = '', plan = null, ready = false;
 let saveTimer = null, saving = false, again = false, lastSynced = '';
 let view = { zoom: 'months', ghost: true };
 try { Object.assign(view, JSON.parse(lsGet(LS_VIEW) || '{}')); } catch {}
@@ -540,31 +539,26 @@ const saveView = () => lsSet(LS_VIEW, JSON.stringify(view));
 function setStatus(s, msg) {
   const el = document.getElementById('status');
   el.dataset.s = s;
-  const text = { loading: 'Loading…', saving: 'Saving…', saved: mode === 'local' ? 'Saved in this browser' : mode === 'sb' ? 'Saved, shared live' : 'Saved', readonly: 'View only', error: msg || 'Not saved' }[s];
+  const text = { loading: 'Loading…', saving: 'Saving…', saved: 'Saved, shared live', error: msg || 'Not saved' }[s];
   el.innerHTML = `<i></i><span>${esc(text)}</span>` + (s === 'error' ? ' <button type="button" id="retry">Try again</button>' : '');
   const r = document.getElementById('retry'); if (r) r.onclick = () => flush();
 }
-function scheduleSave() { if (!canWrite) return; clearTimeout(saveTimer); setStatus('saving'); saveTimer = setTimeout(flush, 600); }
+function scheduleSave() { clearTimeout(saveTimer); setStatus('saving'); saveTimer = setTimeout(flush, 600); }
 async function flush() {
   saveTimer = null;
   if (saving) { again = true; return; }
   saving = true;
   const json = JSON.stringify(plan);
   try {
-    if (mode === 'db') await docRef.set({ schema: 2, plan: JSON.parse(json) });
-    else if (mode === 'sb') {
-      const { error } = await sb.rpc('save_plan', { passcode, new_data: JSON.parse(json) });
-      if (error) throw { code: error.code === '23514' ? 'invalid_argument' : error.code === '28P01' ? 'wrong_password' : 'unavailable' };
-      // tell other open pages to reload; a failure here must never affect the save
-      if (channel) Promise.resolve().then(() => channel.send({ type: 'broadcast', event: 'changed', payload: {} })).catch(() => {});
-    }
-    else lsSet(LS_PLAN, json);
+    const { error } = await sb.rpc('save_plan', { passcode, new_data: JSON.parse(json) });
+    if (error) throw { code: error.code === '23514' ? 'invalid_argument' : error.code === '28P01' ? 'wrong_password' : 'unavailable' };
+    // tell other open pages to reload; a failure here must never affect the save
+    if (channel) Promise.resolve().then(() => channel.send({ type: 'broadcast', event: 'changed', payload: {} })).catch(() => {});
     lastSynced = json; setStatus('saved');
   } catch (e) {
     const code = e && e.code;
-    if (code === 'invalid_argument' && mode === 'db') { canWrite = false; setStatus('readonly'); render(); }
+    if (code === 'invalid_argument') setStatus('error', 'The plan is too large to save. Remove some entries.');
     else if (code === 'wrong_password') setStatus('error', 'The team password was changed. Reload and enter the new one.');
-    else if (code === 'quota_exceeded') setStatus('error', 'Storage is full. Remove some entries, then try again.');
     else setStatus('error', 'Could not save. Your changes are still here.');
   }
   saving = false;
@@ -579,7 +573,7 @@ function toast(msg, undo) {
 }
 document.getElementById('toastUndo').onclick = () => { if (undoFn) undoFn(); undoFn = null; document.getElementById('toast').hidden = true; };
 function commit(mut, undoMsg) {
-  if (!canWrite || !plan) return;
+  if (!plan) return;
   const prev = clone(plan);
   mut(plan);
   plan = normalize(plan);
@@ -600,7 +594,6 @@ const daysTxt = () => plan.weekdays.length === 1 ? DAYPLURAL[plan.weekdays[0]] :
 const missedTxt = n => plan.weekdays.length === 1 ? `${n} ${n === 1 ? DAYPLURAL[plan.weekdays[0]].slice(0, -1) : DAYPLURAL[plan.weekdays[0]]}` : `${n} day${n === 1 ? '' : 's'}`;
 
 function render() {
-  document.getElementById('app').classList.toggle('readonly', !canWrite);
   document.getElementById('zMonths').setAttribute('aria-pressed', String(view.zoom === 'months'));
   document.getElementById('zWeeks').setAttribute('aria-pressed', String(view.zoom === 'weeks'));
   renderTimeline();
@@ -631,7 +624,7 @@ function renderTimeline() {
     canvas.style.width = '';
     canvas.innerHTML = ready
       ? `<div class="empty"><h2>Start a timeline</h2><p>Load the example design project (9 phases, Christmas closure) and adjust it, or start empty.</p>
-         <div class="actions wr"><button class="btn primary" id="useExample">Load example</button><button class="btn" id="useBlank">Start empty</button></div></div>`
+         <div class="actions"><button class="btn primary" id="useExample">Load example</button><button class="btn" id="useBlank">Start empty</button></div></div>`
       : `<div class="empty"><h2>Loading plan…</h2></div>`;
     const ex = document.getElementById('useExample'), bl = document.getElementById('useBlank');
     if (ex) ex.onclick = () => startPlan(clone(EXAMPLE));
@@ -654,7 +647,7 @@ function renderTimeline() {
     else { if (mo === 0 || m === tlStart) head += `<span class="yr" style="left:${X(m)}px">${y}</span>`; head += `<span class="mo" style="left:${X(m)}px">${fmt(m, { month: 'long' })}</span><span class="mo-tick" style="left:${X(m)}px"></span>`; }
     if (i % 2 === 1) shade += `<div class="mshade" style="left:${X(m)}px;width:${w}px"></div>`;
     const past = nextMonth(m) <= TODAY, eaten = othersPct(key);
-    cells += `<button type="button" class="mcell ${past ? 'past' : ''} ${v < 100 ? 'low' : ''} ${v === 0 ? 'zero' : ''}" data-month="${key}" style="left:${X(m) + 3}px;width:${w - 6}px" ${!canWrite ? 'disabled' : ''}
+    cells += `<button type="button" class="mcell ${past ? 'past' : ''} ${v < 100 ? 'low' : ''} ${v === 0 ? 'zero' : ''}" data-month="${key}" style="left:${X(m) + 3}px;width:${w - 6}px"
       aria-label="${fmt(m, { month: 'long', year: 'numeric' })}: ${v}% of the time on this project${eaten ? `, ${eaten}% other projects` : ''}" title="${eaten ? `Other projects take ${eaten}%` : ''}">
       ${eaten ? `<span class="eat" style="height:${Math.min(100, eaten)}%"></span>` : ''}<span class="fill" style="height:${v}%"></span><span class="v">${v}%</span></button>`;
   }
@@ -682,7 +675,7 @@ function renderTimeline() {
   bands += `<div class="tline" style="left:${X(TODAY)}px"></div>`;
 
   // section divider row: icon, title, optional add button, a short explanation next to today
-  const addBtn = (attrs, label) => `<button type="button" class="iadd wr" ${attrs} aria-label="${label}" data-tip="${label}">${PLUS}</button>`;
+  const addBtn = (attrs, label) => `<button type="button" class="iadd" ${attrs} aria-label="${label}" data-tip="${label}">${PLUS}</button>`;
   // section divider row: icon, title, add button, and either content or a short explanation next to today
   const sec = (icon, title, note, btn = '', track = '') => `<div class="tl-row sechead"><div class="lab">${icon}<span class="rowlab">${title}</span>${btn}</div><div class="trk" style="width:${W}px">${track}${note ? `<span class="offempty" style="left:${Math.max(10, X(TODAY) + 10)}px">${note}</span>` : ''}</div></div>`;
   const initials = n => (n.trim().split(/\s+/).map(w => w[0]).join('').slice(0, 2) || '?').toUpperCase();
@@ -710,8 +703,8 @@ function renderTimeline() {
       ? `<button type="button" class="ms" data-id="${t.id}" data-l="${left - 8}" style="left:${prev.left - 8}px;background:${cssc(t.color, 'bg')};border-color:${cssc(t.color, 'bd')}" aria-label="${esc(t.name)}"></button>`
       : `<div class="bar ${r.overflow ? 'over' : ''}" data-id="${t.id}" data-l="${left}" data-w="${width}" style="left:${prev.left}px;width:${prev.width}px;background:${cssc(t.color, 'bg')};border-color:${cssc(t.color, 'bd')}">
           ${r.segs.map(([a, b]) => `<div class="sg" style="left:${X(a) - left}px;width:${Math.max(2, X(b + 1) - X(a))}px"></div>`).join('')}
-          <span class="lbl">${esc(t.name)}</span><span class="rh wr" aria-hidden="true"></span></div>`;
-    return `<div class="tl-row tl-task" data-tid="${t.id}"><div class="lab edit-lab" data-open="${t.id}" tabindex="0" aria-label="Edit ${esc(t.name)}"><button type="button" class="grip wr" data-grip="${t.id}" aria-pressed="false" aria-label="Reorder ${esc(t.name)}. Press space to pick up."><svg width="8" height="14" viewBox="0 0 8 14" aria-hidden="true"><g fill="currentColor"><circle cx="2" cy="2" r="1.3"/><circle cx="6" cy="2" r="1.3"/><circle cx="2" cy="7" r="1.3"/><circle cx="6" cy="7" r="1.3"/><circle cx="2" cy="12" r="1.3"/><circle cx="6" cy="12" r="1.3"/></g></svg></button><span class="cdot" style="background:${cssc(t.color, 'bd')}"></span><span class="tname">${esc(t.name)}</span><span class="tmeta">${durTxt(t.weeks)}</span>${PEN}</div>
+          <span class="lbl">${esc(t.name)}</span><span class="rh" aria-hidden="true"></span></div>`;
+    return `<div class="tl-row tl-task" data-tid="${t.id}"><div class="lab edit-lab" data-open="${t.id}" tabindex="0" aria-label="Edit ${esc(t.name)}"><button type="button" class="grip" data-grip="${t.id}" aria-pressed="false" aria-label="Reorder ${esc(t.name)}. Press space to pick up."><svg width="8" height="14" viewBox="0 0 8 14" aria-hidden="true"><g fill="currentColor"><circle cx="2" cy="2" r="1.3"/><circle cx="6" cy="2" r="1.3"/><circle cx="2" cy="7" r="1.3"/><circle cx="6" cy="7" r="1.3"/><circle cx="2" cy="12" r="1.3"/><circle cx="6" cy="12" r="1.3"/></g></svg></button><span class="cdot" style="background:${cssc(t.color, 'bd')}"></span><span class="tname">${esc(t.name)}</span><span class="tmeta">${durTxt(t.weeks)}</span>${PEN}</div>
       <div class="trk" style="width:${W}px">${ghost}${bar}</div></div>`;
   }).join('');
   prevBars = nextBars;
@@ -732,7 +725,7 @@ function renderTimeline() {
   });
   if (!scrolledOnce) { scrolledOnce = true; document.getElementById('tlScroll').scrollLeft = Math.max(0, X(TODAY) - 100); }
 }
-function startPlan(p) { if (!canWrite) return; plan = normalize(p); render(); scheduleSave(); }
+function startPlan(p) { plan = normalize(p); render(); scheduleSave(); }
 
 /* ---------- popover ---------- */
 const pop = document.getElementById('pop');
@@ -751,12 +744,12 @@ function closePop() { if (pop.hidden) return; pop.hidden = true; pop.innerHTML =
 document.addEventListener('pointerdown', e => { if (!pop.hidden && !pop.contains(e.target) && e.target !== popAnchor) closePop(); }, true);
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closePop(); });
 // keep the popover's own edits from re-rendering it away: apply silently, re-render the timeline only
-function live(mut) { if (!canWrite) return; mut(plan); plan = normalize(plan); const a = popAnchor; render(); popAnchor = a; scheduleSave(); }
+function live(mut) { mut(plan); plan = normalize(plan); const a = popAnchor; render(); popAnchor = a; scheduleSave(); }
 
 function shareControls(value, label, max = 100) {
-  return `<div class="chips" role="group" aria-label="${label}">${SHARES.map(v => `<button type="button" class="chip" data-v="${v}" aria-pressed="${v === value}" ${v > max || !canWrite ? 'disabled' : ''}>${v}%</button>`).join('')}</div>
+  return `<div class="chips" role="group" aria-label="${label}">${SHARES.map(v => `<button type="button" class="chip" data-v="${v}" aria-pressed="${v === value}" ${v > max ? 'disabled' : ''}>${v}%</button>`).join('')}</div>
     ${max < 100 ? `<p>Other projects take ${100 - max}%, so up to ${max}% is possible.</p>` : ''}
-    <div class="range"><input type="range" min="0" max="${max}" step="5" value="${value}" ${canWrite ? '' : 'disabled'}" aria-label="${label}" aria-valuetext="${value} percent"><span class="mono">${value}%</span></div>`;
+    <div class="range"><input type="range" min="0" max="${max}" step="5" value="${value}"" aria-label="${label}" aria-valuetext="${value} percent"><span class="mono">${value}%</span></div>`;
 }
 function bindShare(root, apply) {
   const rng = root.querySelector('input[type=range]'), out = root.querySelector('.range .mono');
@@ -777,8 +770,8 @@ function openMonth(btn) {
   openPop(btn, `<h3>${fmt(d, { month: 'long', year: 'numeric' })}</h3>
     <p>${nextMonth(d) <= TODAY ? 'This month is over. Set the share it really got, and the plan moves accordingly.' : "Share of both people's time that goes to this project. 0% pauses it."}</p>
     ${shareControls(v, 'Share this month', max)}
-    ${list.length ? `<div class="field">Other projects this month<ul class="list">${list.map(o => `<li><span class="grow">${esc(o.name)}</span><span class="mono">${o.percent}%</span><button type="button" class="linkbtn wr" data-edit="${o.id}">Edit</button></li>`).join('')}</ul></div>` : ''}
-    <button type="button" class="linkbtn wr" id="addOtherHere">+ Other project in ${fmt(d, { month: 'long' })}</button>
+    ${list.length ? `<div class="field">Other projects this month<ul class="list">${list.map(o => `<li><span class="grow">${esc(o.name)}</span><span class="mono">${o.percent}%</span><button type="button" class="linkbtn" data-edit="${o.id}">Edit</button></li>`).join('')}</ul></div>` : ''}
+    <button type="button" class="linkbtn" id="addOtherHere">+ Other project in ${fmt(d, { month: 'long' })}</button>
     <label class="check"><input type="checkbox" id="following"> Same share for all later months</label>`,
     root => {
       const fol = root.querySelector('#following');
@@ -797,22 +790,21 @@ const end = () => Math.max(S ? S.projectedEnd : TODAY, TODAY) + 730;
 
 function openOther(anchor, id, monthKeyDefault) {
   const o = id ? plan.otherWork.find(x => x.id === id) : null;
-  if (!o && !canWrite) return;
   const startKey = fromDay(monthStart(Math.min(TODAY, tlStart))).slice(0, 7);
   const keys = []; for (let m = toDay(startKey + '-01'), i = 0; i < 48; m = nextMonth(m), i++) keys.push(fromDay(m).slice(0, 7));
   const from = o ? o.from : (monthKeyDefault || fromDay(TODAY).slice(0, 7)), to = o ? o.to : from;
   [from, to].forEach(k => { if (!keys.includes(k)) keys.push(k); }); keys.sort();
   const opts = sel => keys.map(k => `<option value="${k}" ${k === sel ? 'selected' : ''}>${fmtMonth(k)}</option>`).join('');
-  const pct = o ? o.percent : 30, ro = canWrite ? '' : 'disabled';
+  const pct = o ? o.percent : 30;
   openPop(anchor, `<h3>${o ? esc(o.name) : 'Other project'}</h3>
     <p>Time it takes from both people. This project gets what is left.</p>
     <form id="oForm" style="display:flex;flex-direction:column;gap:10px">
-      <label class="field">Name<input name="name" value="${o ? esc(o.name) : ''}" placeholder="e.g. Client B relaunch" maxlength="60" ${ro} autofocus></label>
-      <div class="field">Takes<div class="chips">${[10, 20, 30, 40, 50, 60, 80].map(v => `<button type="button" class="chip" data-v="${v}" aria-pressed="${v === pct}" ${ro}>${v}%</button>`).join('')}</div></div>
+      <label class="field">Name<input name="name" value="${o ? esc(o.name) : ''}" placeholder="e.g. Client B relaunch" maxlength="60" autofocus></label>
+      <div class="field">Takes<div class="chips">${[10, 20, 30, 40, 50, 60, 80].map(v => `<button type="button" class="chip" data-v="${v}" aria-pressed="${v === pct}">${v}%</button>`).join('')}</div></div>
       <input type="hidden" name="percent" value="${pct}">
-      <div class="frow"><label class="field">From<select name="from" ${ro}>${opts(from)}</select></label><label class="field">To<select name="to" ${ro}>${opts(to)}</select></label></div>
+      <div class="frow"><label class="field">From<select name="from">${opts(from)}</select></label><label class="field">To<select name="to">${opts(to)}</select></label></div>
       <p class="err" hidden></p>
-      <div class="actions wr">${o ? '<button type="button" class="btn danger" id="oDel">Delete</button><span class="spacer"></span>' : ''}<button class="btn primary" type="submit">${o ? 'Save' : 'Add'}</button></div>
+      <div class="actions">${o ? '<button type="button" class="btn danger" id="oDel">Delete</button><span class="spacer"></span>' : ''}<button class="btn primary" type="submit">${o ? 'Save' : 'Add'}</button></div>
     </form>`,
     root => {
       const f = root.querySelector('#oForm'), el = n => f.elements[n];
@@ -834,10 +826,10 @@ function openOther(anchor, id, monthKeyDefault) {
 function openPerson(anchor, pi, focusAdd = false) {
   const p = plan.people[pi];
   const items = p.timeOff.slice().sort((a, b) => a.start.localeCompare(b.start));
-  openPop(anchor, `<label class="field">Name<input id="pName" value="${esc(p.name)}" maxlength="40" ${canWrite ? '' : 'disabled'}></label>
+  openPop(anchor, `<label class="field">Name<input id="pName" value="${esc(p.name)}" maxlength="40"></label>
     <h3 style="margin-top:2px">Time off</h3>
-    ${items.length ? `<ul class="list">${items.map(t => `<li><span class="grow">${esc(t.label)}</span><span class="mono">${fmtShort(toDay(t.start))} – ${fmtShort(toDay(t.end))} · ${missedTxt(workingIn(toDay(t.start), toDay(t.end)))}</span><button type="button" class="x wr" data-oid="${t.id}" aria-label="Remove ${esc(t.label)}">×</button></li>`).join('')}</ul>` : `<p>No time off yet. Only project days count: when one person misses one, that day runs at half speed.</p>`}
-    <form id="offForm" class="wr" style="display:flex;flex-direction:column;gap:8px">
+    ${items.length ? `<ul class="list">${items.map(t => `<li><span class="grow">${esc(t.label)}</span><span class="mono">${fmtShort(toDay(t.start))} – ${fmtShort(toDay(t.end))} · ${missedTxt(workingIn(toDay(t.start), toDay(t.end)))}</span><button type="button" class="x" data-oid="${t.id}" aria-label="Remove ${esc(t.label)}">×</button></li>`).join('')}</ul>` : `<p>No time off yet. Only project days count: when one person misses one, that day runs at half speed.</p>`}
+    <form id="offForm" style="display:flex;flex-direction:column;gap:8px">
       <div class="frow"><label class="field">From<input type="date" name="start" ${focusAdd ? 'autofocus' : ''}></label><label class="field">To<input type="date" name="end"></label></div>
       <label class="field">Label <span style="font-weight:400">(optional)</span><input type="text" name="label" maxlength="60" placeholder="Holiday"></label>
       <p class="err" hidden></p>
@@ -866,15 +858,13 @@ function openPerson(anchor, pi, focusAdd = false) {
 
 function openClosure(anchor, id) {
   const c = id ? plan.closures.find(x => x.id === id) : null;
-  if (!c && !canWrite) return;
-  const ro = canWrite ? '' : 'disabled';
   openPop(anchor, `<h3>${c ? esc(c.name) : 'Company closure'}</h3>
     <p>Nobody works. It keeps exactly this length, whatever the time share.</p>
     <form id="cForm" style="display:flex;flex-direction:column;gap:8px">
-      <label class="field">Name<input name="name" value="${c ? esc(c.name) : ''}" placeholder="Weihnachten und Neujahr" maxlength="60" ${ro} autofocus></label>
-      <div class="frow"><label class="field">From<input type="date" name="start" value="${c ? c.start : ''}" ${ro}></label><label class="field">To<input type="date" name="end" value="${c ? c.end : ''}" ${ro}></label></div>
+      <label class="field">Name<input name="name" value="${c ? esc(c.name) : ''}" placeholder="Weihnachten und Neujahr" maxlength="60" autofocus></label>
+      <div class="frow"><label class="field">From<input type="date" name="start" value="${c ? c.start : ''}"></label><label class="field">To<input type="date" name="end" value="${c ? c.end : ''}"></label></div>
       <p class="err" hidden></p>
-      <div class="actions wr">${c ? '<button type="button" class="btn danger" id="cDel">Delete</button><span class="spacer"></span>' : ''}<button class="btn primary" type="submit">${c ? 'Save' : 'Add closure'}</button></div>
+      <div class="actions">${c ? '<button type="button" class="btn danger" id="cDel">Delete</button><span class="spacer"></span>' : ''}<button class="btn primary" type="submit">${c ? 'Save' : 'Add closure'}</button></div>
     </form>`,
     root => {
       const f = root.querySelector('#cForm');
@@ -896,14 +886,14 @@ function openClosure(anchor, id) {
 document.getElementById('moreBtn').onclick = e => {
   openPop(e.currentTarget, `
     <div style="padding:6px 10px 2px;font-size:12px;color:var(--muted)">Project days <span style="color:var(--faint)">(100% = both people on these days)</span></div>
-    <div class="chips" style="padding:4px 10px 6px" id="mDays">${[1, 2, 3, 4, 5].map(d => `<button type="button" class="chip" data-d="${d}" aria-pressed="${plan && plan.weekdays.includes(d)}" ${canWrite && plan ? '' : 'disabled'}>${DAYNAMES[d]}</button>`).join('')}</div>
+    <div class="chips" style="padding:4px 10px 6px" id="mDays">${[1, 2, 3, 4, 5].map(d => `<button type="button" class="chip" data-d="${d}" aria-pressed="${plan && plan.weekdays.includes(d)}" ${plan ? '' : 'disabled'}>${DAYNAMES[d]}</button>`).join('')}</div>
     <hr>
     <label><input type="checkbox" id="mGhost" ${view.ghost ? 'checked' : ''}> Show plan at full time</label>
     <hr>
-    <button type="button" id="mClosure" class="wr">Add company closure</button>
+    <button type="button" id="mClosure">Add company closure</button>
     <button type="button" id="mExport">Export as JSON</button>
-    <button type="button" id="mImport" class="wr">Import JSON</button>
-    ${mode === 'sb' ? '<hr><button type="button" id="mLock">Forget password on this device</button>' : ''}`,
+    <button type="button" id="mImport">Import JSON</button>
+    <hr><button type="button" id="mLock">Forget password on this device</button>`,
     root => {
       root.querySelector('#mDays').onclick = ev => {
         const c = ev.target.closest('.chip'); if (!c || !plan) return;
@@ -924,9 +914,7 @@ async function exportPlan() {
   if (!plan) return;
   const data = JSON.stringify({ app: 'team-capacity-timeline', version: 2, plan }, null, 2);
   const filename = `capacity-timeline-${fromDay(TODAY)}.json`;
-  if (downloads) { try { await downloads.save({ filename, data }); toast('Export saved'); return; } catch (e) { if (e && e.code === 'declined') return; } }
-  if (!window.claude) { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([data], { type: 'application/json' })); a.download = filename; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000); return; }
-  try { await navigator.clipboard.writeText(data); toast('Plan copied to the clipboard as JSON'); } catch { toast('Export is not available in this view'); }
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([data], { type: 'application/json' })); a.download = filename; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
 document.getElementById('importFile').onchange = async e => {
   const f = e.target.files[0]; e.target.value = '';
@@ -947,7 +935,6 @@ let editId = null, editColor = 'blue';
 function openTask(id) {
   if (!plan) return;
   const t = id ? plan.tasks.find(x => x.id === id) : null;
-  if (!t && !canWrite) return;
   editId = id;
   editColor = t ? t.color : PALETTE[(plan.tasks.length + 1) % PALETTE.length];
   document.getElementById('taskDlgTitle').textContent = t ? t.name : 'New task';
@@ -965,9 +952,8 @@ function openTask(id) {
   document.getElementById('tDelete').hidden = !t;
   document.getElementById('tErr').hidden = true;
   drawSwatches();
-  taskDlg.querySelectorAll('input,select,#tColors button,#tDelete,#tSave').forEach(el => el.disabled = !canWrite);
   taskDlg.showModal();
-  if (canWrite && !t) document.getElementById('tName').focus();
+  if (!t) document.getElementById('tName').focus();
 }
 function drawSwatches() { document.getElementById('tColors').innerHTML = PALETTE.map(c => `<button type="button" data-c="${c}" aria-label="${c}" aria-pressed="${c === editColor}" style="background:${cssc(c, 'bg')};border-color:${cssc(c, 'bd')}"></button>`).join(''); }
 document.getElementById('tColors').onclick = e => { const b = e.target.closest('button'); if (b) { editColor = b.dataset.c; drawSwatches(); } };
@@ -1006,7 +992,7 @@ const canvasEl = document.getElementById('canvas'), tip = document.getElementByI
 let drag = null, suppressClick = false;
 canvasEl.addEventListener('keydown', e => {
   const mc = e.target.closest && e.target.closest('.mcell');
-  if (!mc || !canWrite || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown')) return;
+  if (!mc || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown')) return;
   e.preventDefault();
   const key = mc.dataset.month, max = Math.max(0, 100 - othersPct(key));
   const v = clamp(shareOf(key) + (e.key === 'ArrowUp' ? 5 : -5), 0, max);
@@ -1026,10 +1012,9 @@ canvasEl.addEventListener('click', e => {
   if (t.closest('.grip')) return;
   const lab = t.closest('[data-open]'); if (lab) return openTask(lab.dataset.open);
   const ms = t.closest('.ms'); if (ms) return openTask(ms.dataset.id);
-  const bar = t.closest('.bar'); if (bar && !canWrite) return openTask(bar.dataset.id);
 });
 canvasEl.addEventListener('pointerdown', e => {
-  if (!canWrite || e.button !== 0) return;
+  if (e.button !== 0) return;
   const grip = e.target.closest('.grip');
   if (grip) { startReorder(grip, e); return; }
   const mc = e.target.closest('.mcell');
@@ -1164,7 +1149,7 @@ function endReorder(cancel) {
 // keyboard: space picks up, arrows move, space drops, escape puts it back
 canvasEl.addEventListener('keydown', e => {
   const grip = e.target.closest && e.target.closest('.grip');
-  if (!grip || !canWrite) return;
+  if (!grip) return;
   const id = grip.dataset.grip, refocus = () => { const g = canvasEl.querySelector(`.grip[data-grip="${id}"]`); if (g) { g.setAttribute('aria-pressed', String(!!kbPick)); g.focus(); } };
   const name = plan.tasks.find(t => t.id === id).name;
   if (e.key === ' ' || e.key === 'Enter') {
@@ -1236,68 +1221,41 @@ function closeGate() { document.getElementById('gate').hidden = true; }
 /* ---------- boot ---------- */
 render();
 (async () => {
-  let db = null;
-  try { db = window.claude && window.claude.use ? await window.claude.use('db') : null; } catch { db = null; }
-  try { downloads = window.claude && window.claude.use ? await window.claude.use('downloads') : null; } catch { downloads = null; }
-  if (db) {
-    mode = 'db';
-    docRef = db.doc('plans/main');
-    try { const u = await window.claude.use('user'); if (u && (await u.can('data.write')) === false) canWrite = false; } catch {}
-    docRef.onSnapshot(snap => {
-      if (snap.metadata.hasPendingWrites) return;
-      const first = !ready; ready = true;
-      if (!snap.exists) { if (first) { setStatus(canWrite ? 'saved' : 'readonly'); render(); } return; }
-      const incoming = snap.data().plan, json = JSON.stringify(normalize(incoming));
-      if (json === lastSynced && !first) return;
-      if (saveTimer || saving) return;
-      lastSynced = json;
-      plan = normalize(incoming);
-      setStatus(canWrite ? 'saved' : 'readonly');
-      if (pop.hidden) render();
-    }, () => setStatus('error', 'Live sync stopped. Reload the page to reconnect.'));
-  } else if (window.supabase && typeof SUPABASE !== 'undefined') {
-    // own website: the plan lives in Supabase behind a shared team password
-    mode = 'sb';
-    sb = window.supabase.createClient(SUPABASE.url, SUPABASE.key, { auth: { persistSession: false } });
-    const apply = (incoming, first) => {
-      const json = JSON.stringify(normalize(incoming));
-      if (json === lastSynced && !first) return;
-      if (saveTimer || saving) return;
-      lastSynced = json;
-      plan = normalize(incoming);
-      if (pop.hidden) render();
-    };
-    const load = async first => {
-      const { data, error } = await sb.rpc('get_plan', { passcode });
-      if (error && error.code === '28P01') return 'denied';
-      ready = true;
-      if (error) { setStatus('error', 'Could not load the plan. Check the connection and reload.'); render(); return 'error'; }
-      if (data) apply(data, first); else render();
-      setStatus('saved');
-      return 'ok';
-    };
-    passcode = lsGet(PASS_KEY) || '';
-    let gateMsg = '';
-    for (;;) {
-      if (!passcode) { const r = await askPassword(gateMsg); passcode = r.pass; if (r.remember) lsSet(PASS_KEY, passcode); }
-      if (await load(true) !== 'denied') break;
-      try { localStorage.removeItem(PASS_KEY); } catch {}
-      passcode = ''; gateMsg = 'That password is not right. Try again.';
-    }
-    closeGate();
-    // other open pages only hear "something changed" and then load the plan with their own password
-    channel = sb.channel('plan-main', { config: { broadcast: { self: false } } })
-      .on('broadcast', { event: 'changed' }, () => { if (!saveTimer && !saving) load(false); })
-      .subscribe(status => { if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') setStatus('error', 'Live sync paused. Changes still save; reload to see the other person\'s edits.'); });
-    // catch up after the laptop slept or the tab was in the background
-    document.addEventListener('visibilitychange', () => { if (!document.hidden && !saveTimer && !saving) load(false); });
-  } else {
-    mode = 'local';
-    let p = null;
-    try { const s = lsGet(LS_PLAN); p = s ? JSON.parse(s) : null; } catch {}
-    plan = p ? normalize(p) : null;
-    ready = true; setStatus('saved'); render();
+  // the plan lives in Supabase behind a shared team password
+  if (!window.supabase) { ready = true; setStatus('error', 'Could not load the page completely. Check the connection and reload.'); render(); return; }
+  sb = window.supabase.createClient(SUPABASE.url, SUPABASE.key, { auth: { persistSession: false } });
+  const apply = (incoming, first) => {
+    const json = JSON.stringify(normalize(incoming));
+    if (json === lastSynced && !first) return;
+    if (saveTimer || saving) return;
+    lastSynced = json;
+    plan = normalize(incoming);
+    if (pop.hidden) render();
+  };
+  const load = async first => {
+    const { data, error } = await sb.rpc('get_plan', { passcode });
+    if (error && error.code === '28P01') return 'denied';
+    ready = true;
+    if (error) { setStatus('error', 'Could not load the plan. Check the connection and reload.'); render(); return 'error'; }
+    if (data) apply(data, first); else render();
+    setStatus('saved');
+    return 'ok';
+  };
+  passcode = lsGet(PASS_KEY) || '';
+  let gateMsg = '';
+  for (;;) {
+    if (!passcode) { const r = await askPassword(gateMsg); passcode = r.pass; if (r.remember) lsSet(PASS_KEY, passcode); }
+    if (await load(true) !== 'denied') break;
+    try { localStorage.removeItem(PASS_KEY); } catch {}
+    passcode = ''; gateMsg = 'That password is not right. Try again.';
   }
+  closeGate();
+  // other open pages only hear "something changed" and then load the plan with their own password
+  channel = sb.channel('plan-main', { config: { broadcast: { self: false } } })
+    .on('broadcast', { event: 'changed' }, () => { if (!saveTimer && !saving) load(false); })
+    .subscribe(status => { if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') setStatus('error', 'Live sync paused. Changes still save; reload to see the other person\'s edits.'); });
+  // catch up after the laptop slept or the tab was in the background
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && !saveTimer && !saving) load(false); });
 })();
 </script>
 
