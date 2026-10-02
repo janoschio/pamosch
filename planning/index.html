@@ -117,8 +117,9 @@ button { cursor: pointer; }
 .mcell.zero .fill { border-top-color: transparent; }
 .mcell:hover, .mcell:focus-visible { border-color: var(--accent); }
 .mcell:disabled { cursor: default; opacity: .45; border-color: var(--line-soft); }
-.mcell.past { cursor: default; background: var(--surface-2); border-style: dashed; }
-.mcell.past .v { color: var(--faint); font-weight: 400; }
+/* finished months stay editable (to record what really happened) but read quieter */
+.mcell.past .fill { opacity: .55; }
+.mcell.past .v { color: var(--muted); }
 .mcell.dragging .fill { transition: none; }
 .olane { height: 32px; }
 .olane .lab { gap: 9px; }
@@ -349,7 +350,8 @@ const monthShare = (plan, key) => clamp((plan.months[key] ?? plan.defaultShare) 
 // task.weeks = calendar weeks the task takes at 100%, i.e. with both people on every
 // project day (plan.weekdays, e.g. [5] = Fridays only). Each project day advances the
 // work by (share of time this month) × (people present / 2). Other days, weekends and
-// company closures advance nothing. Days before `today` count as planned.
+// company closures advance nothing. Past months use what was entered for them, so a
+// share corrected afterwards (e.g. September was really 60%) moves the plan.
 function computeSchedule(plan, today) {
   const wdays = new Set(plan.weekdays && plan.weekdays.length ? plan.weekdays : [1, 2, 3, 4, 5]);
   const perWeek = wdays.size;
@@ -374,7 +376,7 @@ function computeSchedule(plan, today) {
     if (working[i]) {
       const present = off.filter(rs => !inR(rs, d)).length;
       away[i] = TEAM - Math.min(TEAM, present);
-      v = i < tIdx ? 1 : share(d) * Math.min(TEAM, present) / TEAM;
+      v = share(d) * Math.min(TEAM, present) / TEAM;
     }
     base.r[i] = working[i]; base.c[i + 1] = base.c[i] + working[i];
     team.r[i] = v; team.c[i + 1] = team.c[i] + v;
@@ -411,7 +413,7 @@ function computeSchedule(plan, today) {
     const b = walk(base, bS, w), a = walk(team, aS, w);
     const segs = [];
     let cur = null, prevW = -1;
-    for (let i = Math.max(aS, tIdx); i <= a.end; i++) {
+    for (let i = aS; i <= a.end; i++) {
       if (!working[i]) continue;
       if (away[i]) { if (cur && cur[1] === prevW) cur[1] = i; else { cur = [i, i]; segs.push(cur); } }
       prevW = i;
@@ -628,9 +630,7 @@ function renderTimeline() {
     else { if (mo === 0 || m === tlStart) head += `<span class="yr" style="left:${X(m)}px">${y}</span>`; head += `<span class="mo" style="left:${X(m)}px">${fmt(m, { month: 'long' })}</span><span class="mo-tick" style="left:${X(m)}px"></span>`; }
     if (i % 2 === 1) shade += `<div class="mshade" style="left:${X(m)}px;width:${w}px"></div>`;
     const past = nextMonth(m) <= TODAY, eaten = othersPct(key);
-    // finished months: work there counts as done as planned, so there is nothing to set
-    if (past) { cells += `<span class="mcell past" style="left:${X(m) + 3}px;width:${w - 6}px" title="${fmt(m, { month: 'long' })} is over. Work there counts as planned."><span class="v">Done</span></span>`; continue; }
-    cells += `<button type="button" class="mcell ${v < 100 ? 'low' : ''} ${v === 0 ? 'zero' : ''}" data-month="${key}" style="left:${X(m) + 3}px;width:${w - 6}px" ${past || !canWrite ? 'disabled' : ''}
+    cells += `<button type="button" class="mcell ${past ? 'past' : ''} ${v < 100 ? 'low' : ''} ${v === 0 ? 'zero' : ''}" data-month="${key}" style="left:${X(m) + 3}px;width:${w - 6}px" ${!canWrite ? 'disabled' : ''}
       aria-label="${fmt(m, { month: 'long', year: 'numeric' })}: ${v}% of the time on this project${eaten ? `, ${eaten}% other projects` : ''}" title="${eaten ? `Other projects take ${eaten}%` : ''}">
       ${eaten ? `<span class="eat" style="height:${Math.min(100, eaten)}%"></span>` : ''}<span class="fill" style="height:${v}%"></span><span class="v">${v}%</span></button>`;
   }
@@ -751,7 +751,7 @@ function openMonth(btn) {
   const eaten = othersPct(key), max = Math.max(0, 100 - eaten), v = shareOf(key);
   const list = otherIn(plan, key);
   openPop(btn, `<h3>${fmt(d, { month: 'long', year: 'numeric' })}</h3>
-    <p>Share of both people's time that goes to this project. 0% pauses it.</p>
+    <p>${nextMonth(d) <= TODAY ? 'This month is over. Set the share it really got, and the plan moves accordingly.' : "Share of both people's time that goes to this project. 0% pauses it."}</p>
     ${shareControls(v, 'Share this month', max)}
     ${list.length ? `<div class="field">Other projects this month<ul class="list">${list.map(o => `<li><span class="grow">${esc(o.name)}</span><span class="mono">${o.percent}%</span><button type="button" class="linkbtn wr" data-edit="${o.id}">Edit</button></li>`).join('')}</ul></div>` : ''}
     <button type="button" class="linkbtn wr" id="addOtherHere">+ Other project in ${fmt(d, { month: 'long' })}</button>
