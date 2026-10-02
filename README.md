@@ -4,6 +4,8 @@ Team Capacity Timeline for a two-person project, served at https://www.pamosch.c
 
 - `planning/index.html` – the whole app, served at /planning (no build step). Loads supabase-js from jsDelivr.
 - `index.html` – start page with the pamosch logo (inline SVG, also in `logo.svg`).
+- `src/` – sources of the timeline (`planning.template.html`, `schedule.js`); `python3 build.py` writes `planning/index.html`.
+- `tests/schedule.test.js` – tests for the scheduling logic: `node tests/schedule.test.js`.
 - `supabase/migrations/` – schema of the Supabase project `pamosch` (ref `bockhqjqeqwgjtlvgdfz`, Zürich).
 
 ## Data
