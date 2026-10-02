@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="robots" content="noindex, nofollow">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='13' fill='%23000'/%3E%3C/svg%3E">
 <style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style>
 <title>Team Capacity Timeline</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -105,7 +106,8 @@ button { cursor: pointer; }
 /* month share row */
 .share-row { height: 52px; }
 .share-row .lab { flex-direction: column; align-items: flex-start; justify-content: center; gap: 0; }
-.share-row .lab small { font-size: 11px; color: var(--faint); }
+.share-row .lab small { font-size: 11px; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.share-row .lab .rowlab { flex: none; max-width: 100%; color: var(--fg); }
 /* each month is its own vertical slider: the fill is the share this project gets */
 .mcell { position: absolute; top: 5px; height: 42px; border: 1px solid var(--line-soft); border-radius: 5px; background: var(--surface); padding: 0; overflow: hidden; cursor: ns-resize; touch-action: none; }
 .mcell .fill { position: absolute; left: 0; right: 0; bottom: 0; background: var(--accent-soft); border-top: 2px solid var(--accent); transition: height .15s; }
@@ -130,7 +132,27 @@ button { cursor: pointer; }
 .sechead .lab { background: var(--surface-2); gap: 7px; }
 .sechead .lab > svg, .sechead .rowlab { color: var(--muted); }
 .sechead .rowlab { font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .07em; flex: 1; }
-.sechead .addoff { height: 22px; font-size: 11px; }
+.sechead .rowlab { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+/* one add pattern everywhere: a ghost icon button with a tooltip */
+.iadd { width: 26px; height: 26px; border: 1px solid transparent; background: none; color: var(--muted); border-radius: 6px; padding: 0; display: inline-flex; align-items: center; justify-content: center; flex: none; }
+.iadd:hover, .iadd:focus-visible { background: var(--accent-soft); color: var(--accent); }
+.plane .iadd { opacity: 0; }
+.plane:hover .iadd, .plane .lab:focus-within .iadd { opacity: 1; }
+@media (hover: none) { .plane .iadd { opacity: 1; } }
+/* rows that open an editor: whole name cell is the target, a pencil hints at it */
+.edit-lab { cursor: pointer; }
+.edit-lab:hover, .edit-lab:focus-visible { background: var(--surface-2) !important; }
+.pen { color: var(--faint); opacity: 0; flex: none; display: inline-flex; }
+.edit-lab:hover .pen, .edit-lab:focus-visible .pen { opacity: 1; }
+.edit-lab:hover .tmeta { display: none; }
+@media (hover: none) { .pen { display: none; } }
+/* resizable name column */
+.tl-body { position: relative; }
+.colsize { position: absolute; top: 0; bottom: 0; left: calc(var(--lab) - 4px); width: 8px; cursor: col-resize; z-index: 7; touch-action: none; }
+.colsize::after { content: ""; position: absolute; top: 0; bottom: 0; left: 3px; width: 2px; background: var(--accent); opacity: 0; transition: opacity .12s; }
+.colsize:hover::after, .colsize:focus-visible::after, .colsize.active::after { opacity: 1; }
+.colsize:focus-visible { outline: none; }
+.col-resizing, .col-resizing * { cursor: col-resize !important; user-select: none; }
 .sechead .offempty { top: 8px; }
 .plane { height: 40px; }
 .plane .lab { gap: 9px; }
@@ -266,7 +288,8 @@ dialog details[open] summary { margin-bottom: 10px; }
         <button type="button" class="iconbtn" id="moreBtn" aria-label="More options" aria-haspopup="menu"><svg width="14" height="4" viewBox="0 0 14 4" aria-hidden="true"><g fill="currentColor"><circle cx="2" cy="2" r="1.6"/><circle cx="7" cy="2" r="1.6"/><circle cx="12" cy="2" r="1.6"/></g></svg></button>
       </div>
     </div>
-    <div class="tl-scroll" id="tlScroll"><div class="tl-canvas" id="canvas"></div></div>
+    <div class="tl-body"><div class="tl-scroll" id="tlScroll"><div class="tl-canvas" id="canvas"></div></div>
+      <div class="colsize wr" id="colsize" role="separator" aria-orientation="vertical" aria-label="Name column width. Drag or use the arrow keys, double-click to reset." tabindex="0"></div></div>
     <div class="legend" id="legend">
       <span><i style="border:1.5px dashed var(--faint)"></i>Plan at full time</span>
       <span><i style="background:repeating-linear-gradient(135deg,var(--seg) 0 3px,var(--c-gray-bg) 3px 7px)"></i>One person away on a project day, half speed</span>
@@ -556,6 +579,14 @@ function renderAnswer() {
   a.innerHTML = `<span>Last task ends <b class="mono">${fmt(S.projectedEnd)}</b></span><span class="pill ${dd > 0 ? 'late' : ''}" title="At 100% it would end ${fmt(S.baselineEnd)}">${delta}</span>`;
 }
 
+// icons used in the name column
+const SUN = '<svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="8" cy="8" r="3"/><path d="M8 1.5v1.5M8 13v1.5M1.5 8H3M13 8h1.5M3.4 3.4l1 1M11.6 11.6l1 1M3.4 12.6l1-1M11.6 4.4l1-1"/></g></svg>';
+const PLUS = '<svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1.5v9M1.5 6h9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>';
+const BAG = '<svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><rect x="1.75" y="4.5" width="12.5" height="9" rx="1.5"/><path d="M5.5 4.5V3a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v1.5M1.75 8.5h12.5"/></g></svg>';
+const FLAG = '<svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 14.5V2M3 2.5h8.5l-1.5 3 1.5 3H3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/></svg>';
+const LIST = '<svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2 4h7M5 8h8M3.5 12h6"/></g></svg>';
+const PEN = '<span class="pen" aria-hidden="true"><svg width="12" height="12" viewBox="0 0 16 16"><path d="M10.5 2.5l3 3L5 14H2v-3z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg></span>';
+
 function renderTimeline() {
   const canvas = document.getElementById('canvas');
   if (!plan) {
@@ -596,7 +627,7 @@ function renderTimeline() {
   const others = plan.otherWork.map(o => {
     const a = o.from < firstKey ? firstKey : o.from, b = o.to > lastKey ? lastKey : o.to;
     const seg = a <= b ? `<button type="button" class="oseg" data-oid="${o.id}" style="left:${monthLeft(a) + 3}px;width:${Math.max(20, monthRight(b) - monthLeft(a) - 6)}px" title="${esc(o.name)}: ${o.percent}% from ${fmtMonth(o.from)} to ${fmtMonth(o.to)}">${esc(o.name)} · ${o.percent}%</button>` : '';
-    return `<div class="tl-row olane"><div class="lab"><span class="odot" aria-hidden="true"></span><span class="rowlab" style="color:var(--fg)">${esc(o.name)}</span><span class="tmeta">${o.percent}% · ${fmtMonth(o.from)}–${fmtMonth(o.to)}</span></div><div class="trk" style="width:${W}px">${seg}</div></div>`;
+    return `<div class="tl-row olane"><div class="lab edit-lab" data-olab="${o.id}" tabindex="0" role="button" aria-label="Edit ${esc(o.name)}"><span class="odot" aria-hidden="true"></span><span class="rowlab" style="color:var(--fg)">${esc(o.name)}</span><span class="tmeta">${o.percent}%</span>${PEN}</div><div class="trk" style="width:${W}px">${seg}</div></div>`;
   }).join('');
   if (view.zoom === 'weeks') {
     let first = tlStart; while (dow(first) !== 1) first++;
@@ -613,23 +644,21 @@ function renderTimeline() {
   tags += `<span class="tag today" style="left:${X(TODAY) + 2}px">Today</span>`;
   bands += `<div class="tline" style="left:${X(TODAY)}px"></div>`;
 
-  const SUN = '<svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="8" cy="8" r="3"/><path d="M8 1.5v1.5M8 13v1.5M1.5 8H3M13 8h1.5M3.4 3.4l1 1M11.6 11.6l1 1M3.4 12.6l1-1M11.6 4.4l1-1"/></g></svg>';
-  const PLUS = '<svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M5 1v8M1 5h8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>';
-  const BAG = '<svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><rect x="1.75" y="4.5" width="12.5" height="9" rx="1.5"/><path d="M5.5 4.5V3a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v1.5M1.75 8.5h12.5"/></g></svg>';
-  const LIST = '<svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2 4h7M5 8h8M3.5 12h6"/></g></svg>';
   // section divider row: icon, title, optional add button, a short explanation next to today
-  const sec = (icon, title, note, btn = '') => `<div class="tl-row sechead"><div class="lab">${icon}<span class="rowlab">${title}</span>${btn}</div><div class="trk" style="width:${W}px">${note ? `<span class="offempty" style="left:${Math.max(10, X(TODAY) + 10)}px">${note}</span>` : ''}</div></div>`;
+  const addBtn = (attrs, label) => `<button type="button" class="iadd wr" ${attrs} aria-label="${label}" data-tip="${label}">${PLUS}</button>`;
+  // section divider row: icon, title, add button, and either content or a short explanation next to today
+  const sec = (icon, title, note, btn = '', track = '') => `<div class="tl-row sechead"><div class="lab">${icon}<span class="rowlab">${title}</span>${btn}</div><div class="trk" style="width:${W}px">${track}${note ? `<span class="offempty" style="left:${Math.max(10, X(TODAY) + 10)}px">${note}</span>` : ''}</div></div>`;
   const initials = n => (n.trim().split(/\s+/).map(w => w[0]).join('').slice(0, 2) || '?').toUpperCase();
   const lanes = `${sec(SUN, 'Time off', `Holidays and days away. Only ${daysTxt()} count: one person away means that day runs at half speed.`)}`
   + plan.people.map((p, pi) => {
     const col = PEOPLE_COLORS[pi];
     const upcoming = p.timeOff.filter(t => toDay(t.end) >= TODAY);
     const missed = upcoming.reduce((s, t) => s + workingIn(Math.max(TODAY, toDay(t.start)), toDay(t.end)), 0);
-    const meta = upcoming.length ? `${missed ? missedTxt(missed) : 'no ' + DAYPLURAL[plan.weekdays[0]].toLowerCase()} missed` : 'no time off planned';
-    return `<div class="tl-row plane"><div class="lab">
+    const meta = missed ? `${missedTxt(missed)} off` : 'No time off';
+    return `<div class="tl-row plane"><div class="lab edit-lab" data-person="${pi}" tabindex="0" role="button" aria-label="${esc(p.name)}: time off and name">
       <span class="avatar" style="background:${cssc(col, 'bg')};border-color:${cssc(col, 'bd')}" aria-hidden="true">${esc(initials(p.name))}</span>
       <span class="pwho"><span class="pname">${esc(p.name)}</span><span class="pmeta">${meta}</span></span>
-      <button type="button" class="addoff wr" data-person="${pi}" aria-label="Add time off for ${esc(p.name)}" title="Add time off">${PLUS}<span>Time off</span></button></div>
+      ${addBtn(`data-person="${pi}" data-add="1"`, `Add time off for ${esc(p.name)}`)}</div>
     <div class="trk" style="width:${W}px">${p.timeOff.map(t => { const a = toDay(t.start), b = toDay(t.end), wpx = Math.max(8, X(b + 1) - X(a)); return `<button type="button" class="offseg" data-person="${pi}" style="left:${X(a)}px;width:${wpx}px;background:${cssc(col, 'bg')};border-color:${cssc(col, 'bd')}" title="${esc(p.name)} away: ${esc(t.label)}, ${fmt(a)} – ${fmt(b)}">${wpx > 34 ? SUN : ''}${wpx > 54 ? `<span>${esc(t.label)}</span>` : ''}</button>`; }).join('')}</div></div>`;
   }).join('');
 
@@ -645,7 +674,7 @@ function renderTimeline() {
       : `<div class="bar ${r.overflow ? 'over' : ''}" data-id="${t.id}" data-l="${left}" data-w="${width}" style="left:${prev.left}px;width:${prev.width}px;background:${cssc(t.color, 'bg')};border-color:${cssc(t.color, 'bd')}">
           ${r.segs.map(([a, b]) => `<div class="sg" style="left:${X(a) - left}px;width:${Math.max(2, X(b + 1) - X(a))}px"></div>`).join('')}
           <span class="lbl">${esc(t.name)}</span><span class="rh wr" aria-hidden="true"></span></div>`;
-    return `<div class="tl-row tl-task" data-tid="${t.id}"><div class="lab" data-open="${t.id}" title="${esc(t.name)}"><button type="button" class="grip wr" data-grip="${t.id}" aria-pressed="false" aria-label="Reorder ${esc(t.name)}. Press space to pick up."><svg width="8" height="14" viewBox="0 0 8 14" aria-hidden="true"><g fill="currentColor"><circle cx="2" cy="2" r="1.3"/><circle cx="6" cy="2" r="1.3"/><circle cx="2" cy="7" r="1.3"/><circle cx="6" cy="7" r="1.3"/><circle cx="2" cy="12" r="1.3"/><circle cx="6" cy="12" r="1.3"/></g></svg></button><span class="cdot" style="background:${cssc(t.color, 'bd')}"></span><span class="tname">${esc(t.name)}</span><span class="tmeta">${durTxt(t.weeks)}</span></div>
+    return `<div class="tl-row tl-task" data-tid="${t.id}"><div class="lab edit-lab" data-open="${t.id}" tabindex="0" aria-label="Edit ${esc(t.name)}"><button type="button" class="grip wr" data-grip="${t.id}" aria-pressed="false" aria-label="Reorder ${esc(t.name)}. Press space to pick up."><svg width="8" height="14" viewBox="0 0 8 14" aria-hidden="true"><g fill="currentColor"><circle cx="2" cy="2" r="1.3"/><circle cx="6" cy="2" r="1.3"/><circle cx="2" cy="7" r="1.3"/><circle cx="6" cy="7" r="1.3"/><circle cx="2" cy="12" r="1.3"/><circle cx="6" cy="12" r="1.3"/></g></svg></button><span class="cdot" style="background:${cssc(t.color, 'bd')}"></span><span class="tname">${esc(t.name)}</span><span class="tmeta">${durTxt(t.weeks)}</span>${PEN}</div>
       <div class="trk" style="width:${W}px">${ghost}${bar}</div></div>`;
   }).join('');
   prevBars = nextBars;
@@ -653,14 +682,13 @@ function renderTimeline() {
   canvas.innerHTML = `
     <div class="overlay" style="left:var(--lab);width:${W}px">${shade}${bands}</div>
     <div class="tl-row tl-head"><div class="lab">${plan.tasks.length} task${plan.tasks.length === 1 ? '' : 's'}</div><div class="trk" style="width:${W}px">${head}</div></div>
-    <div class="tl-row share-row"><div class="lab"><span class="rowlab">Time on this project</span><small>drag a month up or down</small></div><div class="trk" style="width:${W}px">${cells}</div></div>
-    ${sec(BAG, 'Other projects', plan.otherWork.length ? 'Work that takes time away from this project. Each month above gets what is left.' : 'Nothing yet. Add work that takes time away, e.g. another client at 30%.', `<button type="button" class="addoff wr" id="addOther" aria-label="Add another project that takes time">${PLUS}<span>Project</span></button>`)}
+    <div class="tl-row share-row"><div class="lab"><span class="rowlab">Share per month</span><small>Drag a month up or down</small></div><div class="trk" style="width:${W}px">${cells}</div></div>
+    ${sec(BAG, 'Other projects', plan.otherWork.length ? 'Work that takes time away from this project. Each month above gets what is left.' : 'Nothing yet. Add work that takes time away, e.g. another client at 30%.', addBtn('id="addOther"', 'Add other project'))}
     ${others}
-    <div class="tl-row lane"><div class="lab"><span class="rowlab">Company closures</span><button type="button" class="add wr" id="addClosure" aria-label="Add company closure">+</button></div><div class="trk" style="width:${W}px">${tags}</div></div>
+    ${sec(FLAG, 'Closures', plan.closures.length ? '' : 'No company closures yet', addBtn('id="addClosure"', 'Add company closure'), tags)}
     ${lanes}
-    ${sec(LIST, 'Tasks', plan.tasks.length ? 'Drag the grip to reorder, click a task to edit, drag a bar to move it.' : 'No tasks yet. Add the first phase of the project.', `<button type="button" class="addoff wr" id="addTaskHead" aria-label="Add task">${PLUS}<span>Task</span></button>`)}
-    ${rows}
-    <div class="tl-row tl-add wr"><div class="lab"><button type="button" id="addTaskRow">+ Add task</button></div><div class="trk" style="width:${W}px"></div></div>`;
+    ${sec(LIST, 'Tasks', plan.tasks.length ? 'Drag the grip to reorder, click a task to edit, drag a bar to move it.' : 'No tasks yet. Add the first phase of the project.', addBtn('id="addTaskHead"', 'Add task'))}
+    ${rows}`;
   requestAnimationFrame(() => {
     canvas.querySelectorAll('.bar').forEach(b => { b.style.left = b.dataset.l + 'px'; b.style.width = b.dataset.w + 'px'; });
     canvas.querySelectorAll('.ms').forEach(b => { b.style.left = b.dataset.l + 'px'; });
@@ -766,25 +794,25 @@ function openOther(anchor, id, monthKeyDefault) {
     });
 }
 
-function openPerson(anchor, pi) {
+function openPerson(anchor, pi, focusAdd = false) {
   const p = plan.people[pi];
   const items = p.timeOff.slice().sort((a, b) => a.start.localeCompare(b.start));
-  openPop(anchor, `<h3>Time off · ${esc(p.name)}</h3>
+  openPop(anchor, `<label class="field">Name<input id="pName" value="${esc(p.name)}" maxlength="40" ${canWrite ? '' : 'disabled'}></label>
+    <h3 style="margin-top:2px">Time off</h3>
     ${items.length ? `<ul class="list">${items.map(t => `<li><span class="grow">${esc(t.label)}</span><span class="mono">${fmtShort(toDay(t.start))} – ${fmtShort(toDay(t.end))} · ${missedTxt(workingIn(toDay(t.start), toDay(t.end)))}</span><button type="button" class="x wr" data-oid="${t.id}" aria-label="Remove ${esc(t.label)}">×</button></li>`).join('')}</ul>` : `<p>No time off yet. Only project days count: when one person misses one, that day runs at half speed.</p>`}
     <form id="offForm" class="wr" style="display:flex;flex-direction:column;gap:8px">
-      <div class="frow"><label class="field">From<input type="date" name="start" autofocus></label><label class="field">To<input type="date" name="end"></label></div>
+      <div class="frow"><label class="field">From<input type="date" name="start" ${focusAdd ? 'autofocus' : ''}></label><label class="field">To<input type="date" name="end"></label></div>
       <label class="field">Label <span style="font-weight:400">(optional)</span><input type="text" name="label" maxlength="60" placeholder="Holiday"></label>
       <p class="err" hidden></p>
       <div class="actions"><button class="btn primary" type="submit">Add time off</button></div>
-    </form>
-    <details class="wr"><summary class="linkbtn" style="cursor:pointer">Rename ${esc(p.name)}</summary><label class="field" style="margin-top:8px">Name<input id="pName" value="${esc(p.name)}" maxlength="40"></label></details>`,
+    </form>`,
     root => {
       const nm = root.querySelector('#pName');
       if (nm) nm.onchange = () => { const v = nm.value.trim(); if (v) live(pl => { pl.people[pi].name = v; }); };
       root.querySelectorAll('[data-oid]').forEach(b => b.onclick = () => {
         const t = p.timeOff.find(x => x.id === b.dataset.oid);
         commit(pl => { pl.people[pi].timeOff = pl.people[pi].timeOff.filter(x => x.id !== t.id); }, `${t.label} removed`);
-        openPerson(document.querySelector(`.addoff[data-person="${pi}"]`) || anchor, pi);
+        openPerson(document.querySelector(`.lab[data-person="${pi}"]`) || anchor, pi);
       });
       const f = root.querySelector('#offForm');
       if (f) f.onsubmit = e => {
@@ -794,7 +822,7 @@ function openPerson(anchor, pi) {
         if (en < s) { err.textContent = 'The last day is before the first day.'; err.hidden = false; return; }
         commit(pl => { pl.people[pi].timeOff.push({ id: uid(), label: f.elements.label.value.trim() || 'Time off', start: s, end: en }); });
         toast(`Time off added for ${p.name}`);
-        openPerson(document.querySelector(`.addoff[data-person="${pi}"]`) || anchor, pi);
+        openPerson(document.querySelector(`.lab[data-person="${pi}"]`) || anchor, pi);
       };
     });
 }
@@ -952,8 +980,9 @@ canvasEl.addEventListener('click', e => {
   if (t.closest('#addOther')) return openOther(t.closest('#addOther'), null);
   const tag = t.closest('.tag[data-cid]'); if (tag) return openClosure(tag, tag.dataset.cid);
   if (t.closest('#addClosure')) return openClosure(t.closest('#addClosure'), null);
-  const per = t.closest('[data-person]'); if (per) return openPerson(per, +per.dataset.person);
-  if (t.closest('#addTaskRow') || t.closest('#addTaskHead')) return openTask(null);
+  const per = t.closest('[data-person]'); if (per) return openPerson(per.closest('.lab') || per, +per.dataset.person, !!per.dataset.add);
+  const ol = t.closest('[data-olab]'); if (ol) return openOther(ol, ol.dataset.olab);
+  if (t.closest('#addTaskHead')) return openTask(null);
   if (t.closest('.grip')) return;
   const lab = t.closest('[data-open]'); if (lab) return openTask(lab.dataset.open);
   const ms = t.closest('.ms'); if (ms) return openTask(ms.dataset.id);
@@ -1017,6 +1046,36 @@ function endDrag(cancel) {
 }
 canvasEl.addEventListener('pointerup', () => { if (reorder) endReorder(false); else endDrag(false); });
 canvasEl.addEventListener('pointercancel', () => { if (reorder) endReorder(true); else endDrag(true); });
+
+canvasEl.addEventListener('keydown', e => {
+  if ((e.key === 'Enter' || e.key === ' ') && e.target.classList && e.target.classList.contains('edit-lab')) { e.preventDefault(); e.target.click(); }
+});
+
+/* ---------- name column width (per viewer, remembered in this browser) ---------- */
+const LAB_MIN = 140, LAB_MAX = 480, LAB_DEFAULT = 210;
+const colsize = document.getElementById('colsize');
+const currentLab = () => document.querySelector('.tl-row .lab')?.getBoundingClientRect().width || LAB_DEFAULT;
+function setLab(w, save = true) {
+  if (w == null) { document.documentElement.style.removeProperty('--lab'); delete view.labW; }
+  else { w = Math.round(clamp(w, LAB_MIN, LAB_MAX)); document.documentElement.style.setProperty('--lab', `min(${w}px, 60vw)`); view.labW = w; }
+  colsize.setAttribute('aria-valuenow', String(Math.round(currentLab())));
+  if (save) saveView();
+}
+if (view.labW) setLab(view.labW, false);
+colsize.setAttribute('aria-valuemin', LAB_MIN); colsize.setAttribute('aria-valuemax', LAB_MAX);
+colsize.addEventListener('pointerdown', e => {
+  if (e.button !== 0) return;
+  const x0 = e.clientX, w0 = currentLab();
+  colsize.setPointerCapture(e.pointerId); colsize.classList.add('active'); document.body.classList.add('col-resizing'); tip.hidden = true;
+  const move = ev => setLab(w0 + ev.clientX - x0, false);
+  const up = () => { colsize.removeEventListener('pointermove', move); colsize.removeEventListener('pointerup', up); colsize.removeEventListener('pointercancel', up); colsize.classList.remove('active'); document.body.classList.remove('col-resizing'); saveView(); };
+  colsize.addEventListener('pointermove', move); colsize.addEventListener('pointerup', up); colsize.addEventListener('pointercancel', up);
+});
+colsize.addEventListener('dblclick', () => setLab(null));
+colsize.addEventListener('keydown', e => {
+  if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); setLab(currentLab() + (e.key === 'ArrowRight' ? 16 : -16)); }
+  if (e.key === 'Home' || e.key === 'Enter') { e.preventDefault(); setLab(null); }
+});
 
 /* ---------- reordering tasks ---------- */
 let reorder = null, kbPick = null;
@@ -1088,6 +1147,14 @@ canvasEl.addEventListener('keydown', e => {
 canvasEl.addEventListener('focusout', e => { if (kbPick && e.target.closest && e.target.closest('.grip') && !document.hasFocus()) kbPick = null; });
 canvasEl.addEventListener('pointerleave', () => { tip.hidden = true; });
 function showTip(e) {
+  const tipEl = e.target.closest('[data-tip]');
+  if (tipEl) {
+    tip.innerHTML = `<span>${esc(tipEl.dataset.tip)}</span>`; tip.hidden = false;
+    const r = tipEl.getBoundingClientRect();
+    tip.style.left = Math.max(8, Math.min(innerWidth - tip.offsetWidth - 8, r.left + r.width / 2 - tip.offsetWidth / 2)) + 'px';
+    tip.style.top = (r.bottom + 6) + 'px';
+    return;
+  }
   const bar = e.target.closest('.bar, .ms');
   if (!bar || !S) { tip.hidden = true; return; }
   const t = plan.tasks.find(x => x.id === bar.dataset.id), r = S.byId.get(bar.dataset.id); if (!t || !r) { tip.hidden = true; return; }
