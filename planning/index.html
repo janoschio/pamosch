@@ -117,6 +117,8 @@ button { cursor: pointer; }
 .mcell.zero .fill { border-top-color: transparent; }
 .mcell:hover, .mcell:focus-visible { border-color: var(--accent); }
 .mcell:disabled { cursor: default; opacity: .45; border-color: var(--line-soft); }
+.mcell.past { cursor: default; background: var(--surface-2); border-style: dashed; }
+.mcell.past .v { color: var(--faint); font-weight: 400; }
 .mcell.dragging .fill { transition: none; }
 .olane { height: 32px; }
 .olane .lab { gap: 9px; }
@@ -472,9 +474,18 @@ const EXAMPLE = {
 function normalize(p) {
   p = p && typeof p === 'object' ? p : {};
   const range = r => r && isDate(r.start) && isDate(r.end) && r.end >= r.start;
-  const defaultShare = snap5(p.defaultShare ?? p.settings?.globalCapacity ?? 100);
-  const months = {};
-  for (const [k, v] of Object.entries(p.months || {})) if (/^\d{4}-\d{2}$/.test(k) && v != null && snap5(v) !== defaultShare) months[k] = snap5(v);
+  // Every month starts at 100%. Plans saved while a page-wide share existed (e.g. 50%) keep their
+  // schedule: that share is written into each month from now on that had no value of its own.
+  const oldDefault = snap5(p.defaultShare ?? p.settings?.globalCapacity ?? 100);
+  const raw = {};
+  for (const [k, v] of Object.entries(p.months || {})) if (/^\d{4}-\d{2}$/.test(k) && v != null) raw[k] = snap5(v);
+  if (oldDefault !== 100) {
+    // fill the gaps up to the last month set by hand (or two years when none was set)
+    const keys = Object.keys(raw).sort(), last = keys.length ? keys[keys.length - 1] : fromDay(TODAY + 730).slice(0, 7);
+    for (let m = monthStart(TODAY); fromDay(m).slice(0, 7) <= last; m = nextMonth(m)) { const k = fromDay(m).slice(0, 7); if (!(k in raw)) raw[k] = oldDefault; }
+  }
+  const defaultShare = 100, months = {};
+  for (const [k, v] of Object.entries(raw)) if (v !== 100) months[k] = v;
   const src = Array.isArray(p.people) ? p.people : [];
   const people = [0, 1].map(i => {
     const x = src[i] || {};
@@ -617,6 +628,8 @@ function renderTimeline() {
     else { if (mo === 0 || m === tlStart) head += `<span class="yr" style="left:${X(m)}px">${y}</span>`; head += `<span class="mo" style="left:${X(m)}px">${fmt(m, { month: 'long' })}</span><span class="mo-tick" style="left:${X(m)}px"></span>`; }
     if (i % 2 === 1) shade += `<div class="mshade" style="left:${X(m)}px;width:${w}px"></div>`;
     const past = nextMonth(m) <= TODAY, eaten = othersPct(key);
+    // finished months: work there counts as done as planned, so there is nothing to set
+    if (past) { cells += `<span class="mcell past" style="left:${X(m) + 3}px;width:${w - 6}px" title="${fmt(m, { month: 'long' })} is over. Work there counts as planned."><span class="v">Done</span></span>`; continue; }
     cells += `<button type="button" class="mcell ${v < 100 ? 'low' : ''} ${v === 0 ? 'zero' : ''}" data-month="${key}" style="left:${X(m) + 3}px;width:${w - 6}px" ${past || !canWrite ? 'disabled' : ''}
       aria-label="${fmt(m, { month: 'long', year: 'numeric' })}: ${v}% of the time on this project${eaten ? `, ${eaten}% other projects` : ''}" title="${eaten ? `Other projects take ${eaten}%` : ''}">
       ${eaten ? `<span class="eat" style="height:${Math.min(100, eaten)}%"></span>` : ''}<span class="fill" style="height:${v}%"></span><span class="v">${v}%</span></button>`;
