@@ -1,9 +1,11 @@
-# Supabase pauses free projects after a week without traffic. Ping the database twice a week.
+# Supabase pauses free projects with too little database activity over 7 days; its docs say
+# "a few user requests to the database each day" is enough. Run three times a day, so a
+# delayed or skipped GitHub run never leaves a gap.
 name: Keep Supabase awake
 
 on:
   schedule:
-    - cron: '17 6 * * 1,4'   # Monday and Thursday, 06:17 UTC
+    - cron: '17 0,8,16 * * *'   # 00:17, 08:17, 16:17 UTC
   workflow_dispatch:
 
 permissions:
@@ -20,9 +22,12 @@ jobs:
         run: |
           # the public key the page already uses
           key=$(grep -o "key: '[^']*'" planning/index.html | head -1 | cut -d"'" -f2)
-          curl -fsS --retry 3 --retry-delay 10 -X POST \
-            -H "apikey: $key" -H "Content-Type: application/json" -d '{}' \
-            https://bockhqjqeqwgjtlvgdfz.supabase.co/rest/v1/rpc/keepalive
+          for i in 1 2 3; do
+            curl -fsS --retry 3 --retry-delay 10 -X POST \
+              -H "apikey: $key" -H "Content-Type: application/json" -d '{}' \
+              https://bockhqjqeqwgjtlvgdfz.supabase.co/rest/v1/rpc/keepalive
+            echo
+          done
 
       # GitHub turns off scheduled workflows after 60 days without commits; re-enabling resets that.
       - name: Keep this schedule enabled
